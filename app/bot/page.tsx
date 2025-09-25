@@ -1,0 +1,42 @@
+import { Metadata } from "next";
+import BotStatusOverview from "@/components/bot/BotStatusOverview";
+import BotPerformance from "@/components/bot/BotPerformance";
+import RecentTrades from "@/components/bot/RecentTrades";
+import WithdrawPanel from "@/components/bot/WithdrawPanel";
+import { RoleGuard } from "@/components/auth/RoleGuard";
+
+export const metadata: Metadata = {
+  title: "Bot Trading - IKABAY",
+  description: "Suivez les performances de votre bot de copytrading en temps réel",
+};
+
+export default function BotPage() {
+  return (
+    <RoleGuard>
+      <div className="container mx-auto px-4 py-12">
+        <div className="mb-8">
+          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+            Bot Copytrading
+          </h1>
+          <p className="text-gray-600">
+            Suivez les performances de votre bot de trading en temps réel et retirez vos gains
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Main Content */}
+          <div className="lg:col-span-2 space-y-8">
+            <BotStatusOverview />
+            <RecentTrades />
+          </div>
+
+          {/* Sidebar */}
+          <div className="space-y-6">
+            <BotPerformance />
+            <WithdrawPanel />
+          </div>
+        </div>
+      </div>
+    </RoleGuard>
+  );
+}
