@@ -1,0 +1,98 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: [
+    './pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  theme: {
+    extend: {
+      colors: {
+        caribbean: {
+          blue: '#17c0eb',
+          yellow: '#feca57', 
+          green: '#1dd1a1',
+          dark: '#222f3e',
+        },
+        coral: {
+          '50': '#fef7f0',
+          '100': '#fdeee0',
+          '200': '#fad9c0',
+          '300': '#f6be95',
+          '400': '#f19968',
+          '500': '#ed7544',
+          '600': '#de5a2a',
+          '700': '#b84620',
+          '800': '#93391f',
+          '900': '#76311d',
+        },
+        ocean: {
+          '50': '#f0f9ff',
+          '100': '#e0f2fe',
+          '200': '#bae6fd',
+          '300': '#7dd3fc',
+          '400': '#38bdf8',
+          '500': '#0ea5e9',
+          '600': '#0284c7',
+          '700': '#0369a1',
+          '800': '#075985',
+          '900': '#0c4a6e',
+        },
+        'sunset': {
+          50: '#fff7ed',
+          100: '#ffedd5',
+          200: '#fed7aa',
+          300: '#fdba74',
+          400: '#fb923c',
+          500: '#f97316',
+          600: '#ea580c',
+          700: '#c2410c',
+          800: '#9a3412',
+          900: '#7c2d12',
+        },
+        'palm': {
+          50: '#f7fee7',
+          100: '#ecfccb',
+          200: '#d9f99d',
+          300: '#bef264',
+          400: '#a3e635',
+          500: '#84cc16',
+          600: '#65a30d',
+          700: '#4d7c0f',
+          800: '#365314',
+          900: '#1a2e05',
+        },
+        'sand': {
+          50: '#fefce8',
+          100: '#fef9c3',
+          200: '#fef08a',
+          300: '#fde047',
+          400: '#facc15',
+          500: '#eab308',
+          600: '#ca8a04',
+          700: '#a16207',
+          800: '#854d0e',
+          900: '#713f12',
+        },
+        caribBlue: "#0077b6",
+        caribGreen: "#43aa8b",
+        caribSun: "#f4a261",
+        caribRed: "#e63946"
+      },
+      fontFamily: {
+        'sans': ['Inter', 'system-ui', 'sans-serif'],
+        'display': ['Poppins', 'Inter', 'sans-serif'],
+        'body': ['Open Sans', 'Inter', 'sans-serif'],
+      },
+      borderRadius: { xl: "1rem", '2xl': '1.25rem' },
+      backgroundImage: {
+        'caribbean-gradient': 'linear-gradient(135deg, #1dd1a1 0%, #17c0eb 50%, #feca57 100%)',
+        'coral-gradient': 'linear-gradient(135deg, #ed7544 0%, #f19968 100%)',
+      },
+      boxShadow: {
+        'caribbean': '0 10px 40px -10px rgba(29, 209, 161, 0.3)',
+      }
+    },
+  },
+  plugins: [],
+}
