@@ -1,0 +1,12 @@
+﻿[build]
+  command = "npm run build"
+  publish = ".next"
+
+[plugins]
+  package = "@netlify/plugin-nextjs"
+
+[functions]
+  node_bundler = "esbuild"
+
+[context.production.environment]
+  NODE_VERSION = "20.18.0"

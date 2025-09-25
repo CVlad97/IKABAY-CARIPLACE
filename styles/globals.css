@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .btn {
+    @apply px-6 py-3 rounded-2xl font-semibold transition-all duration-200 inline-flex items-center justify-center gap-2;
+  }
+  
+  .btn-primary {
+    @apply bg-caribbean-blue text-white hover:bg-caribbean-blue/90 shadow-lg hover:shadow-xl;
+  }
+  
+  .btn-secondary {
+    @apply bg-caribbean-green text-white hover:bg-caribbean-green/90 shadow-lg hover:shadow-xl;
+  }
+  
+  .btn-outline {
+    @apply border-2 border-caribbean-blue text-caribbean-blue hover:bg-caribbean-blue hover:text-white;
+  }
+  
+  .card {
+    @apply bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-200 overflow-hidden;
+  }
+  
+  .badge {
+    @apply px-3 py-1 rounded-full text-sm font-medium;
+  }
+  
+  .badge-local {
+    @apply bg-caribbean-green/10 text-caribbean-green;
+  }
+  
+  .badge-import {
+    @apply bg-caribbean-blue/10 text-caribbean-blue;
+  }
+  
+  .input {
+    @apply w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-caribbean-blue focus:border-transparent;
+  }
+  
+  .select {
+    @apply w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-caribbean-blue focus:border-transparent bg-white;
+  }
+}
+
+.honeypot {
+  position: absolute;
+  left: -9999px;
+  opacity: 0;
+}
