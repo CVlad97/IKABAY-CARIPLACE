@@ -1,4 +1,4 @@
-name: IKABAY Bootstrap
+name: IKABAY Bootstrap V2
 on:
   workflow_dispatch: {}
 
@@ -17,37 +17,55 @@ jobs:
         with:
           node-version: 18
 
-      - name: Create/Update files (idempotent)
+      - name: Debug repo layout
         run: |
-          set -e
+          set -euxo pipefail
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -la
+          echo "::group::Tree depth 2"
+          find . -maxdepth 2 -type d -print | sort
+          echo "::endgroup::"
 
-          echo "== 1) Fix routes duplicates scripts =="
-          mkdir -p scripts
-          cat > scripts/fix_routes.sh << 'EOF'
-          #!/usr/bin/env bash
-          set -e
-          b="app/[locale]"
-          # Jeux
-          if [ -d "$b/jeux" ] && [ -d "$b/(store)/jeux" ]; then
-            echo "[fix] Duplicate /jeux → keep (store)/jeux"
-            rm -rf "$b/jeux"
-          fi
-          # Cart
-          if [ -d "$b/cart" ] && [ -d "$b/(store)/cart" ]; then
-            echo "[fix] Duplicate /cart → keep (store)/cart"
-            rm -rf "$b/cart"
-          fi
-          # Checkout
-          if [ -d "$b/checkout" ] && [ -d "$b/(store)/checkout" ]; then
-            echo "[fix] Duplicate /checkout → keep (store)/checkout"
-            rm -rf "$b/checkout"
-          fi
-          EOF
-          chmod +x scripts/fix_routes.sh
-          bash scripts/fix_routes.sh || true
+      - name: Create/Update files (idempotent, escaped [locale])
+        run: |
+          set -euxo pipefail
 
-          echo "== 2) Components: PriceDomModes + OriginBadge =="
+          # 0) Préparer arborescences
+          mkdir -p "app/[locale]"
           mkdir -p components/marketplace
+          mkdir -p scripts
+          mkdir -p .github/workflows
+
+          ########################
+          # 1) Fix routes duplicates
+          ########################
+          cat > scripts/fix_routes.sh << 'EOSH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          b='app/[locale]'
+
+          fix_pair () {
+            local name="$1"
+            local root="$b/$name"
+            local store="$b/(store)/$name"
+            if [ -d "$root" ] && [ -d "$store" ]; then
+              echo "[fix] Duplicate /$name → keep (store)/$name, remove root"
+              rm -rf "$root"
+            else
+              echo "[ok] No duplicate for /$name"
+            fi
+          }
+
+          fix_pair "jeux"
+          fix_pair "cart"
+          fix_pair "checkout"
+          EOSH
+          chmod +x scripts/fix_routes.sh
+          scripts/fix_routes.sh || true
+
+          ########################
+          # 2) Components
+          ########################
           cat > components/marketplace/PriceDomModes.tsx << 'EOF'
           "use client";
           import React,{useState} from "react";
@@ -88,7 +106,9 @@ jobs:
           }
           EOF
 
-          echo "== 3) Create key pages if missing =="
+          ########################
+          # 3) Key pages (create if missing)
+          ########################
           mkpage () {
             p="$1"
             if [ ! -f "$p/page.tsx" ] && [ ! -f "$p/page.jsx" ]; then
@@ -104,8 +124,11 @@ jobs:
           }
           EOF
               echo "[create] $p/page.tsx"
+            else
+              echo "[skip] $p/page already exists"
             fi
           }
+
           mkpage "app/[locale]/ultrasourcing"
           mkpage "app/[locale]/shipin"
           mkpage "app/[locale]/services/new"
@@ -115,39 +138,50 @@ jobs:
           mkpage "app/[locale]/jeux"
           mkpage "app/[locale]/sos"
 
-          echo "== 4) Minimal APIs (fallback) =="
+          ########################
+          # 4) Minimal APIs (fallback, only if missing)
+          ########################
           mmk () { mkdir -p "$(dirname "$1")"; }
-          # ultrasourcing
-          mmk app/api/ultrasourcing/request/route.ts
-          cat > app/api/ultrasourcing/request/route.ts << 'EOF'
+
+          create_api_if_absent () {
+            local f="$1"
+            local content="$2"
+            if [ ! -f "$f" ]; then
+              mmk "$f"
+              printf "%s" "$content" > "$f"
+              echo "[create] $f"
+            else
+              echo "[skip] $f exists"
+            fi
+          }
+
+          create_api_if_absent "app/api/ultrasourcing/request/route.ts" "$(cat <<'TS'
           import { NextResponse } from "next/server";
           export async function POST(req: Request) {
             try {
               const body = await req.json();
-              // TODO: if Supabase configured, insert in ultrasourcing_requests
-              return NextResponse.json({ ok: true, ref: `ULTRA-${Date.now()}` });
+              return NextResponse.json({ ok: true, ref: `ULTRA-\${Date.now()}` });
             } catch (e:any) {
               return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 });
             }
           }
-          EOF
-          # shipin
-          mmk app/api/shipin/create/route.ts
-          cat > app/api/shipin/create/route.ts << 'EOF'
+          TS
+          )"
+
+          create_api_if_absent "app/api/shipin/create/route.ts" "$(cat <<'TS'
           import { NextResponse } from "next/server";
           export async function POST(req: Request) {
             try {
               const body = await req.json();
-              // TODO: call /api/customs/estimate if present, else apply coefficients (PriceDomModes)
-              return NextResponse.json({ ok: true, dossierId: `SHIP-${Date.now()}` });
+              return NextResponse.json({ ok: true, dossierId: `SHIP-\${Date.now()}` });
             } catch (e:any) {
               return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 });
             }
           }
-          EOF
-          # services
-          mmk app/api/services/create/route.ts
-          cat > app/api/services/create/route.ts << 'EOF'
+          TS
+          )"
+
+          create_api_if_absent "app/api/services/create/route.ts" "$(cat <<'TS'
           import { NextResponse } from "next/server";
           export async function POST(req: Request) {
             try {
@@ -158,24 +192,23 @@ jobs:
               return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 });
             }
           }
-          EOF
-          # jobs
-          mmk app/api/jobs/apply/route.ts
-          cat > app/api/jobs/apply/route.ts << 'EOF'
+          TS
+          )"
+
+          create_api_if_absent "app/api/jobs/apply/route.ts" "$(cat <<'TS'
           import { NextResponse } from "next/server";
           export async function POST(req: Request) {
             try {
-              // for simplicity; multipart handling can be added later
               const body = await req.json();
-              return NextResponse.json({ ok: true, applicationId: `JOB-${Date.now()}` });
+              return NextResponse.json({ ok: true, applicationId: `JOB-\${Date.now()}` });
             } catch (e:any) {
               return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 });
             }
           }
-          EOF
-          # WhatsApp webhook (stub)
-          mmk app/api/whatsapp/webhook/route.ts
-          cat > app/api/whatsapp/webhook/route.ts << 'EOF'
+          TS
+          )"
+
+          create_api_if_absent "app/api/whatsapp/webhook/route.ts" "$(cat <<'TS'
           import { NextResponse } from "next/server";
           export async function GET(req: Request) {
             const { searchParams } = new URL(req.url);
@@ -192,63 +225,62 @@ jobs:
               return NextResponse.json({ ok:false, notice:"WA not configured" }, { status: 503 });
             }
             const body = await req.json().catch(()=>({}));
-            // TODO: parse messages and reply via Graph API if needed
             return NextResponse.json({ ok:true });
           }
-          EOF
-          # Telegram webhook (stub)
-          mmk app/api/telegram/webhook/route.ts
-          cat > app/api/telegram/webhook/route.ts << 'EOF'
+          TS
+          )"
+
+          create_api_if_absent "app/api/telegram/webhook/route.ts" "$(cat <<'TS'
           import { NextResponse } from "next/server";
           export async function POST(req: Request) {
             if (!process.env.TELEGRAM_BOT_TOKEN) {
               return NextResponse.json({ ok:false, notice:"TG not configured" }, { status: 503 });
             }
             const body = await req.json().catch(()=>({}));
-            // TODO: parse updates and respond
             return NextResponse.json({ ok:true });
           }
-          EOF
+          TS
+          )"
 
-          echo "== 5) quick_check.sh =="
+          ########################
+          # 5) quick_check.sh
+          ########################
           if [ ! -f quick_check.sh ]; then
-            cat > quick_check.sh << 'EOF'
+            cat > quick_check.sh << 'EOSH'
             #!/usr/bin/env bash
             set -e
             BASE="${1:-http://localhost:3000}"
             echo "# /api/products"; curl -s "$BASE/api/products" | head -c 200 || true; echo
             echo "# /api/customs/estimate"; curl -s -X POST "$BASE/api/customs/estimate" -H 'Content-Type: application/json' -d '{"island":"MQ","family":"high-tech","cif":100,"duty_rate":0.0}' || true; echo
             echo "# /api/sys/returns/health"; curl -s -H "X-Health-Check: ${HEALTH_CHECK_TOKEN:-test}" "$BASE/api/sys/returns/health" || true; echo
-          EOF
+          EOSH
             chmod +x quick_check.sh
           fi
 
-          echo "== 6) package.json scripts =="
+          ########################
+          # 6) package.json scripts (safe)
+          ########################
           if [ -f package.json ]; then
-            node - <<'EOF'
+            node - <<'EON'
             const fs=require('fs');
             const p=JSON.parse(fs.readFileSync('package.json','utf8'));
             p.scripts=p.scripts||{};
             if(!p.scripts.build) p.scripts.build="next build";
             fs.writeFileSync('package.json', JSON.stringify(p,null,2));
             console.log('package.json updated.');
-            EOF
+EON
           fi
-
-      - name: Build (sanity)
-        run: |
-          npm ci || npm i
-          npm run build --if-present
 
       - name: Commit & Push
         run: |
-          set -e
-          git config user.name "${GITHUB_ACTOR}"
-          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          set -euxo pipefail
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git add -A
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "chore: IKABAY bootstrap (routes fix, DOM price modes, pages clés, APIs fallback, webhooks stubs, quick_check)"
+            git commit -m "chore: IKABAY bootstrap v2 (escaped [locale], routes fix, pages, APIs, quick_check)"
             git push
           fi
