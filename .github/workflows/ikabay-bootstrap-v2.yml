@@ -1,0 +1,224 @@
+name: IKABAY Bootstrap V2
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Debug repo layout
+        run: |
+          set -euxo pipefail
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -la
+          echo "::group::Tree depth 2"
+          find . -maxdepth 2 -type d -print | sort
+          echo "::endgroup::"
+
+      - name: Create/Update files (idempotent, escaped [locale])
+        run: |
+          set -euxo pipefail
+
+          # Arbores
+          mkdir -p "app/[locale]"
+          mkdir -p components/marketplace
+          mkdir -p scripts
+          mkdir -p .github/workflows
+
+          # 1) Fix routes dupliquées (jeux/cart/checkout)
+          cat > scripts/fix_routes.sh << 'EOSH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          b='app/[locale]'
+          fix_pair () {
+            local name="$1"
+            local root="$b/$name"
+            local store="$b/(store)/$name"
+            if [ -d "$root" ] && [ -d "$store" ]; then
+              echo "[fix] Duplicate /$name → keep (store)/$name, remove root"
+              rm -rf "$root"
+            else
+              echo "[ok] No duplicate for /$name"
+            fi
+          }
+          fix_pair "jeux"
+          fix_pair "cart"
+          fix_pair "checkout"
+          EOSH
+          chmod +x scripts/fix_routes.sh
+          scripts/fix_routes.sh || true
+
+          # 2) Components: PriceDomModes + OriginBadge
+          cat > components/marketplace/PriceDomModes.tsx << 'EOF'
+          "use client";
+          import React,{useState} from "react";
+          type Props={ basePrice:number; onMode?:(m:string)=>void };
+          const modes=[
+            {key:"express_relais",label:"Express Relais",coef:1.00},
+            {key:"express_domicile",label:"Express Domicile",coef:1.05},
+            {key:"maritime_relais",label:"Maritime Relais",coef:0.92},
+            {key:"maritime_domicile",label:"Maritime Domicile",coef:0.97},
+          ];
+          export default function PriceDomModes({basePrice,onMode}:Props){
+            const [m,setM]=useState(modes[0].key);
+            const cur=modes.find(x=>x.key===m)!;
+            const price=(basePrice*cur.coef).toFixed(2);
+            return(<div className="space-y-2">
+              <div className="flex gap-2 flex-wrap">
+                {modes.map(x=>(
+                  <button key={x.key}
+                    onClick={()=>{setM(x.key);onMode?.(x.key);}}
+                    className={`px-3 py-1 rounded border ${m===x.key?"bg-emerald-600 text-white":"bg-white"}`}>
+                    {x.label}
+                  </button>
+                ))}
+              </div>
+              <div className="text-sm text-gray-700">Prix <b>Rendu Martinique</b> : <b>{price} €</b></div>
+            </div>);
+          }
+          EOF
+
+          cat > components/marketplace/OriginBadge.tsx << 'EOF'
+          export default function OriginBadge({origin}:{origin?: "Local"|"Import"}){
+            const isLocal=origin==="Local";
+            return(
+              <span className={`inline-block text-xs px-2 py-0.5 rounded ${isLocal?"bg-green-100 text-green-700":"bg-blue-100 text-blue-700"}`}>
+                {isLocal?"LOCAL":"IMPORT"}
+              </span>
+            );
+          }
+          EOF
+
+          # 3) Pages clés (création si absentes)
+          mkpage () {
+            p="$1"
+            if [ ! -f "$p/page.tsx" ] && [ ! -f "$p/page.jsx" ]; then
+              mkdir -p "$p"
+              cat > "$p/page.tsx" <<EOF
+          export default function Page(){
+            return (
+              <main className="p-6 space-y-4">
+                <h1 className="text-2xl font-bold">$(basename $p)</h1>
+                <p>Section initiale prête. Complétez le contenu si besoin.</p>
+              </main>
+            );
+          }
+          EOF
+              echo "[create] $p/page.tsx"
+            else
+              echo "[skip] $p/page already exists"
+            fi
+          }
+          mkpage "app/[locale]/ultrasourcing"
+          mkpage "app/[locale]/shipin"
+          mkpage "app/[locale]/services/new"
+          mkpage "app/[locale]/emploi"
+          mkpage "app/[locale]/emploi/candidater"
+          mkpage "app/[locale]/earn"
+          mkpage "app/[locale]/jeux"
+          mkpage "app/[locale]/sos"
+
+          # 4) APIs fallback (créées seulement si absentes)
+          mmk () { mkdir -p "$(dirname "$1")"; }
+          create_api_if_absent () {
+            local f="$1"; local content="$2"
+            if [ ! -f "$f" ]; then
+              mmk "$f"; printf "%s" "$content" > "$f"; echo "[create] $f"
+            else
+              echo "[skip] $f exists"
+            fi
+          }
+          create_api_if_absent "app/api/ultrasourcing/request/route.ts" "$(cat <<'TS'
+          import { NextResponse } from "next/server";
+          export async function POST(req: Request) {
+            try { const body = await req.json();
+              return NextResponse.json({ ok: true, ref: `ULTRA-\${Date.now()}` });
+            } catch (e:any) { return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 }); }
+          }
+          TS
+          )"
+          create_api_if_absent "app/api/shipin/create/route.ts" "$(cat <<'TS'
+          import { NextResponse } from "next/server";
+          export async function POST(req: Request) {
+            try { const body = await req.json();
+              return NextResponse.json({ ok: true, dossierId: `SHIP-\${Date.now()}` });
+            } catch (e:any) { return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 }); }
+          }
+          TS
+          )"
+          create_api_if_absent "app/api/services/create/route.ts" "$(cat <<'TS'
+          import { NextResponse } from "next/server";
+          export async function POST(req: Request) {
+            try { const body = await req.json();
+              const notice = process.env.STRIPE_SECRET_KEY ? undefined : "connect_required";
+              return NextResponse.json({ ok: true, notice });
+            } catch (e:any) { return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 }); }
+          }
+          TS
+          )"
+          create_api_if_absent "app/api/jobs/apply/route.ts" "$(cat <<'TS'
+          import { NextResponse } from "next/server";
+          export async function POST(req: Request) {
+            try { const body = await req.json();
+              return NextResponse.json({ ok: true, applicationId: `JOB-\${Date.now()}` });
+            } catch (e:any) { return NextResponse.json({ ok:false, error:e?.message||"bad" }, { status:400 }); }
+          }
+          TS
+          )"
+          create_api_if_absent "app/api/whatsapp/webhook/route.ts" "$(cat <<'TS'
+          import { NextResponse } from "next/server";
+          export async function GET(req: Request) {
+            const { searchParams } = new URL(req.url);
+            const mode = searchParams.get("hub.mode");
+            const token = searchParams.get("hub.verify_token");
+            const challenge = searchParams.get("hub.challenge");
+            if (mode === "subscribe" && token && challenge && process.env.WA_VERIFY_TOKEN && token === process.env.WA_VERIFY_TOKEN) {
+              return new Response(challenge, { status: 200 });
+            }
+            return NextResponse.json({ ok:false }, { status: 403 });
+          }
+          export async function POST(req: Request) {
+            if (!process.env.WA_ACCESS_TOKEN || !process.env.WA_PHONE_NUMBER_ID) {
+              return NextResponse.json({ ok:false, notice:"WA not configured" }, { status: 503 });
+            }
+            const body = await req.json().catch(()=>({}));
+            return NextResponse.json({ ok:true });
+          }
+          TS
+          )"
+          create_api_if_absent "app/api/telegram/webhook/route.ts" "$(cat <<'TS'
+          import { NextResponse } from "next/server";
+          export async function POST(req: Request) {
+            if (!process.env.TELEGRAM_BOT_TOKEN) {
+              return NextResponse.json({ ok:false, notice:"TG not configured" }, { status: 503 });
+            }
+            const body = await req.json().catch(()=>({}));
+            return NextResponse.json({ ok:true });
+          }
+          TS
+          )"
+
+      - name: Commit & Push
+        run: |
+          set -euxo pipefail
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: IKABAY bootstrap v2 (escaped [locale], routes fix, pages, APIs)"
+            git push
+          fi
