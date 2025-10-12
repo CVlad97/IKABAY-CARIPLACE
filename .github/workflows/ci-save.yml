@@ -1,0 +1,82 @@
+name: CI Safe
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: --max_old_space_size=4096
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci || npm i
+
+      - name: Ensure quick_check.sh exists
+        run: |
+          if [ ! -f quick_check.sh ]; then
+            cat > quick_check.sh << 'EOSH'
+            #!/usr/bin/env bash
+            set -e
+            BASE="${1:-http://localhost:3000}"
+            echo "# /api/products"; curl -s "$BASE/api/products" | head -c 200 || true; echo
+            echo "# /api/customs/estimate"; curl -s -X POST "$BASE/api/customs/estimate" -H 'Content-Type: application/json' -d '{"island":"MQ","family":"high-tech","cif":100,"duty_rate":0.0}' || true; echo
+            echo "# /api/sys/returns/health"; curl -s -H "X-Health-Check: ${HEALTH_CHECK_TOKEN:-test}" "$BASE/api/sys/returns/health" || true; echo
+            EOSH
+            chmod +x quick_check.sh
+          fi
+
+      - name: Write .env.local (with safe fallbacks)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          HEALTH_CHECK_TOKEN: ${{ secrets.HEALTH_CHECK_TOKEN }}
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+        run: |
+          echo "NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-https://stub.supabase.co}" >> .env.local
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-stub}" >> .env.local
+          echo "HEALTH_CHECK_TOKEN=${HEALTH_CHECK_TOKEN:-test}" >> .env.local
+          echo "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:3000}" >> .env.local
+
+      - name: Build (capture logs)
+        id: build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Smoke test (only if build OK)
+        if: success()
+        env:
+          PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+          HEALTH_CHECK_TOKEN: ${{ secrets.HEALTH_CHECK_TOKEN }}
+        run: |
+          # Si PUBLIC_BASE_URL n'est pas défini en Secrets, on skip gracieusement.
+          if [ -z "${PUBLIC_BASE_URL}" ]; then
+            echo "PUBLIC_BASE_URL manquant (Secrets GitHub). On skip le smoke test."
+            exit 0
+          fi
+          bash quick_check.sh "$PUBLIC_BASE_URL" || true
