@@ -1,0 +1,8 @@
+export default function Page(){
+  return (
+    <main className="p-6 space-y-4">
+      <h1 className="text-2xl font-bold">earn</h1>
+      <p>Section initiale prête. Complétez le contenu si besoin.</p>
+    </main>
+  );
+}
