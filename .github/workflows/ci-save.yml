@@ -29,17 +29,18 @@ jobs:
       - name: Install deps
         run: npm ci || npm i
 
+      # ✅ Pas de here-doc : on écrit quick_check.sh avec printf (robuste en YAML)
       - name: Ensure quick_check.sh exists
         run: |
           if [ ! -f quick_check.sh ]; then
-            cat > quick_check.sh << 'EOSH'
-            #!/usr/bin/env bash
-            set -e
-            BASE="${1:-http://localhost:3000}"
-            echo "# /api/products"; curl -s "$BASE/api/products" | head -c 200 || true; echo
-            echo "# /api/customs/estimate"; curl -s -X POST "$BASE/api/customs/estimate" -H 'Content-Type: application/json' -d '{"island":"MQ","family":"high-tech","cif":100,"duty_rate":0.0}' || true; echo
-            echo "# /api/sys/returns/health"; curl -s -H "X-Health-Check: ${HEALTH_CHECK_TOKEN:-test}" "$BASE/api/sys/returns/health" || true; echo
-            EOSH
+            printf '%s\n' \
+'#!/usr/bin/env bash' \
+'set -e' \
+'BASE="${1:-http://localhost:3000}"' \
+'echo "# /api/products"; curl -s "$BASE/api/products" | head -c 200 || true; echo' \
+'echo "# /api/customs/estimate"; curl -s -X POST "$BASE/api/customs/estimate" -H '"'"'Content-Type: application/json'"'"' -d '"'"'{"island":"MQ","family":"high-tech","cif":100,"duty_rate":0.0}'"'"' || true; echo' \
+'echo "# /api/sys/returns/health"; curl -s -H "X-Health-Check: ${HEALTH_CHECK_TOKEN:-test}" "$BASE/api/sys/returns/health" || true; echo' \
+            > quick_check.sh
             chmod +x quick_check.sh
           fi
 
@@ -74,7 +75,6 @@ jobs:
           PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
           HEALTH_CHECK_TOKEN: ${{ secrets.HEALTH_CHECK_TOKEN }}
         run: |
-          # Si PUBLIC_BASE_URL n'est pas défini en Secrets, on skip gracieusement.
           if [ -z "${PUBLIC_BASE_URL}" ]; then
             echo "PUBLIC_BASE_URL manquant (Secrets GitHub). On skip le smoke test."
             exit 0
