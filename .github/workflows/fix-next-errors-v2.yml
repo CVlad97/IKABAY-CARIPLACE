@@ -1,0 +1,132 @@
+name: Fix Next Errors V2
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch_and_build:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tree (before)
+        run: |
+          set -eux
+          find app -maxdepth 3 -type f \( -path "*/cart/page.*" -o -path "*/checkout/page.*" -o -path "*/(dashboard)/dashboard/page.js" \) -print || true
+
+      # 1) SUPPRIMER les doublons racine /cart et /checkout (on garde TOUT ce qu'il y a sous (store))
+      - name: Remove root cart/checkout pages (force)
+        run: |
+          set -eux
+          # cart
+          if [ -d "app/cart" ]; then
+            echo "[fix] removing entire app/cart (keep app/(store)/cart)"
+            rm -rf app/cart
+          fi
+          # checkout
+          if [ -d "app/checkout" ]; then
+            echo "[fix] removing entire app/checkout (keep app/(store)/checkout)"
+            rm -rf app/checkout
+          fi
+
+      # 2) Créer des server actions dédiées + nettoyer page dashboard
+      - name: Extract server actions + sanitize dashboard page
+        run: |
+          set -eux
+          PAGE="app/(dashboard)/dashboard/page.js"
+          ACTIONS="app/(dashboard)/dashboard/actions.ts"
+          mkdir -p "app/(dashboard)/dashboard"
+
+          # a) Crée/écrase actions serveur
+          cat > "$ACTIONS" <<'EOF'
+"use server";
+import { createServerClient } from "@/lib/supabaseServer";
+
+/** Stats côté serveur (exemple) */
+export async function getStats() {
+  const supabase = createServerClient();
+  if (!supabase) return { orders: 0, revenue: 0 };
+  // TODO: remplace par tes vraies requêtes
+  return { orders: 0, revenue: 0 };
+}
+
+/** MAJ statut commande (exemple) */
+export async function updateOrderStatus(orderId: string, status: string) {
+  const supabase = createServerClient();
+  if (!supabase) return { ok:false };
+  // TODO: update dans la DB
+  return { ok: true, orderId, status };
+}
+EOF
+
+          # b) Si la page existe, on la nettoie
+          if [ -f "$PAGE" ]; then
+            node - <<'JS'
+            const fs = require('fs');
+            const path = "app/(dashboard)/dashboard/page.js";
+            let s = fs.readFileSync(path, 'utf8');
+
+            // 1) Supprimer toute directive 'use client' en tête (on passe en Server Component)
+            s = s.replace(/^\s*['"]use client['"];?\s*\n/,'');
+            // 2) Supprimer toute ligne contenant 'use server'
+            s = s.replace(/[ \t]*['"]use server['"];?[ \t]*\r?\n/g, '');
+
+            // 3) Importer les actions serveurs si pas déjà présent
+            if (!/from\s+["']\.\/actions["']/.test(s)) {
+              // Injecter l'import après la 1ère ligne (ou au début si pas d'import)
+              const lines = s.split('\n');
+              // Si la 1ère ligne commence par import, on insère après le bloc d'import
+              let idx = 0;
+              while (idx < lines.length && /^import\s/.test(lines[idx])) idx++;
+              lines.splice(idx, 0, 'import { getStats, updateOrderStatus } from "./actions";');
+              s = lines.join('\n');
+            }
+
+            fs.writeFileSync(path, s);
+            console.log('dashboard page sanitized & actions imported');
+            JS
+          else
+            echo "[info] dashboard page not found, skipping."
+          fi
+
+      - name: Show tree (after patch)
+        run: |
+          set -eux
+          find app -maxdepth 3 -type f \( -path "*/cart/page.*" -o -path "*/checkout/page.*" -o -path "*/(dashboard)/dashboard/page.js" -o -path "*/(dashboard)/dashboard/actions.ts" \) -print || true
+
+      - name: Setup Node & install
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+      - run: npm ci || npm i
+
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Commit & Push patch
+        if: success()
+        run: |
+          set -eux
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "fix(next): remove root cart/checkout pages; extract server actions; sanitize dashboard"
+            git push
+          fi
