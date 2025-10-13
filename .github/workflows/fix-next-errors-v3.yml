@@ -1,0 +1,148 @@
+name: Fix Next Errors V3
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch_and_build:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show duplicates before
+        run: |
+          set -eux
+          echo "== Candidates cart/checkout =="
+          find app -type f -path "*/cart/page.*" -o -path "*/checkout/page.*" | sort || true
+          echo "== Dashboard page =="
+          test -f "app/(dashboard)/dashboard/page.js" && sed -n '1,120p' app/'(dashboard)'/dashboard/page.js | nl || true
+
+      # 1) Enlève toutes les pages cart/checkout HORS (store)
+      - name: Remove all non-(store) cart/checkout pages
+        run: |
+          set -eux
+          # cart
+          while IFS= read -r f; do
+            if echo "$f" | grep -q "(store)/cart/page."; then
+              echo "[keep] $f"
+            else
+              echo "[rm] $f"
+              rm -f "$f" || true
+            fi
+          done < <(find app -type f -path "*/cart/page.*" | sort || true)
+          # checkout
+          while IFS= read -r f; do
+            if echo "$f" | grep -q "(store)/checkout/page."; then
+              echo "[keep] $f"
+            else
+              echo "[rm] $f"
+              rm -f "$f" || true
+            fi
+          done < <(find app -type f -path "*/checkout/page.*" | sort || true)
+          # Nettoyage des dossiers vides cart/checkout à la racine
+          rmdir app/cart 2>/dev/null || true
+          rmdir app/checkout 2>/dev/null || true
+
+      # 2) Server actions extract + nettoyage dashboard (toutes occurrences)
+      - name: Create server actions + sanitize dashboard page
+        run: |
+          set -eux
+          ACTIONS="app/(dashboard)/dashboard/actions.ts"
+          PAGE="app/(dashboard)/dashboard/page.js"
+          mkdir -p "app/(dashboard)/dashboard"
+
+          # Actions serveur propres
+          cat > "$ACTIONS" <<'EOF'
+"use server";
+import { createServerClient } from "@/lib/supabaseServer";
+
+/** Stats côté serveur (exemple) */
+export async function getStats() {
+  const supabase = createServerClient();
+  if (!supabase) return { orders: 0, revenue: 0 };
+  // TODO: remplace par de vraies requêtes
+  return { orders: 0, revenue: 0 };
+}
+
+/** MAJ statut commande (exemple) */
+export async function updateOrderStatus(orderId: string, status: string) {
+  const supabase = createServerClient();
+  if (!supabase) return { ok:false };
+  // TODO: update DB
+  return { ok: true, orderId, status };
+}
+EOF
+
+          # Sanitize page si elle existe
+          if [ -f "$PAGE" ]; then
+            node - <<'JS'
+            const fs = require('fs');
+            const path = "app/(dashboard)/dashboard/page.js";
+            let s = fs.readFileSync(path, 'utf8');
+
+            // 1) Enlever "use client" en tête (avec ou sans ;, espaces, CRLF)
+            s = s.replace(/^\s*(['"])use client\1;?\s*\r?\n/, '');
+
+            // 2) Enlever toutes les lignes/occurrences "use server" (où qu'elles soient)
+            s = s.replace(/(^|\n)[^\S\r\n]*(['"])use server\2;?[^\S\r\n]*\r?\n/g, '\n');
+            s = s.replace(/(['"])use server\1;?/g, ''); // fallback si inline
+
+            // 3) Import des actions s'il manque
+            if (!/from\s+["']\.\/actions["']/.test(s)) {
+              const lines = s.split('\n');
+              // insérer après le bloc d'import
+              let idx = 0;
+              while (idx < lines.length && /^import\s/.test(lines[idx])) idx++;
+              lines.splice(idx, 0, 'import { getStats, updateOrderStatus } from "./actions";');
+              s = lines.join('\n');
+            }
+
+            fs.writeFileSync(path, s);
+            console.log('dashboard sanitized and actions imported');
+            JS
+          fi
+
+      - name: Show duplicates after
+        run: |
+          set -eux
+          echo "== Remaining cart/checkout =="
+          find app -type f -path "*/cart/page.*" -o -path "*/checkout/page.*" | sort || true
+          echo "== Dashboard head =="
+          sed -n '1,120p' app/'(dashboard)'/dashboard/page.js | nl || true
+
+      - name: Setup Node & install
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+      - run: npm ci || npm i
+
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Commit & Push patch
+        if: success()
+        run: |
+          set -eux
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "fix(next v3): remove all non-(store) cart/checkout pages; sanitize dashboard server actions"
+            git push
+          fi
