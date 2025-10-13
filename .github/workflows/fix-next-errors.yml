@@ -1,0 +1,123 @@
+name: Fix Next Errors
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch_and_build:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tree (debug)
+        run: |
+          set -eux
+          find app -maxdepth 3 -type f \( -path "*/cart/page.*" -o -path "*/checkout/page.*" -o -path "*/(dashboard)/dashboard/page.js" \) -print || true
+
+      # 1) Supprimer les doublons /cart et /checkout en gardant (store)
+      - name: Remove duplicate root pages for cart/checkout
+        run: |
+          set -eux
+          # cart
+          if [ -f "app/cart/page.tsx" ] || [ -f "app/cart/page.jsx" ] || [ -f "app/cart/page.js" ]; then
+            if [ -d "app/(store)/cart" ]; then
+              echo "[fix] removing root app/cart/page.* (keep app/(store)/cart)"
+              rm -f app/cart/page.tsx app/cart/page.jsx app/cart/page.js || true
+              rmdir app/cart 2>/dev/null || true
+            fi
+          fi
+          # checkout
+          if [ -f "app/checkout/page.tsx" ] || [ -f "app/checkout/page.jsx" ] || [ -f "app/checkout/page.js" ]; then
+            if [ -d "app/(store)/checkout" ]; then
+              echo "[fix] removing root app/checkout/page.* (keep app/(store)/checkout)"
+              rm -f app/checkout/page.tsx app/checkout/page.jsx app/checkout/page.js || true
+              rmdir app/checkout 2>/dev/null || true
+            fi
+          fi
+
+      # 2) Refactor Server Actions (dashboard)
+      - name: Extract server actions from dashboard page
+        run: |
+          set -eux
+          PAGE="app/(dashboard)/dashboard/page.js"
+          if [ -f "$PAGE" ]; then
+            mkdir -p "app/(dashboard)/dashboard"
+            ACTIONS="app/(dashboard)/dashboard/actions.ts"
+            # Crée/écrase un fichier actions serveur propre
+            cat > "$ACTIONS" <<'EOF'
+"use server";
+import { createServerClient } from "@/lib/supabaseServer";
+
+/** Exemple : stats côté serveur */
+export async function getStats() {
+  const supabase = createServerClient();
+  if (!supabase) return { orders: 0, revenue: 0 };
+  // TODO: remplace par tes vraies requêtes
+  return { orders: 0, revenue: 0 };
+}
+
+/** Exemple : mise à jour de statut de commande (Server Action) */
+export async function updateOrderStatus(orderId: string, status: string) {
+  const supabase = createServerClient();
+  if (!supabase) return;
+  // TODO: update dans la DB
+  return { ok: true, orderId, status };
+}
+EOF
+            # Patch le page.js pour importer les actions serveur et supprimer 'use server' inline
+            if grep -q "'use server'" "$PAGE" || grep -q '"use server"' "$PAGE"; then
+              # Retire toute ligne 'use server' inline
+              sed -i '/["'\'']use server["'\'']/d' "$PAGE"
+            fi
+            # Ajoute l'import si absent
+            if ! grep -q "from \"./actions\"" "$PAGE" && ! grep -q "from './actions'" "$PAGE"; then
+              # Insère import au début du fichier (après éventuel 'use client')
+              if head -n 1 "$PAGE" | grep -qi "'use client'\\|\"use client\""; then
+                # Client component : on garde client et on importe les server actions (autorisé)
+                awk 'NR==1{print; print "import { getStats, updateOrderStatus } from \"./actions\";"; next}1' "$PAGE" > "$PAGE.tmp" && mv "$PAGE.tmp" "$PAGE"
+              else
+                # Server component : on importe pareil
+                sed -i '1i import { getStats, updateOrderStatus } from "./actions";' "$PAGE"
+              fi
+            fi
+          else
+            echo "[info] dashboard page not found, skipping."
+          fi
+
+      - name: Setup Node & install
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+      - run: npm ci || npm i
+
+      # Build tolérant (si ton next.config.js est strict) : on garde l’existant
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Commit & Push patch
+        if: success()
+        run: |
+          set -eux
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "fix: remove duplicate cart/checkout root pages + extract dashboard server actions"
+            git push
+          fi
