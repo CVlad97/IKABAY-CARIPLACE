@@ -1,0 +1,38 @@
+name: Prompt Runner
+on:
+  workflow_dispatch:
+    inputs:
+      prompt_path:
+        description: "Chemin du prompt (ex: prompts/ikabay_super_prompt.md)"
+        required: true
+        default: "prompts/ikabay_super_prompt.md"
+      branch:
+        description: "Branche de sortie"
+        required: true
+        default: "gen/ikabay"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm i openai@latest
+
+      - name: Generate from prompt
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          node scripts/ai-generate.mjs "${{ github.event.inputs.prompt_path }}"
+
+      - name: Commit changes
+        run: |
+          git checkout -B "${{ github.event.inputs.branch }}"
+          git add -A
+          git -c user.name="ikabay-bot" -c user.email="bot@users.noreply.github.com" commit -m "feat: generated from ${{ github.event.inputs.prompt_path }}" || echo "No changes"
+          git push -f origin "${{ github.event.inputs.branch }}"
