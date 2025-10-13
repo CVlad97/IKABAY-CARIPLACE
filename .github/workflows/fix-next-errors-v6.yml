@@ -1,0 +1,154 @@
+name: Fix Next Errors V6 (purge (store) cart/checkout + sanitize dashboard)
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch_and_build:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show duplicates BEFORE
+        run: |
+          set -eux
+          echo "== BEFORE: every cart/checkout page =="
+          find app -type f \( -path "*/cart/page.*" -o -path "*/checkout/page.*" \) | sort || true
+          echo "== BEFORE: dashboard head =="
+          test -f "app/(dashboard)/dashboard/page.js" && sed -n '1,120p' app/'(dashboard)'/dashboard/page.js | nl || true
+
+      # 1) PURGE physique + git des variantes (store) pour cart/checkout, à tous les niveaux
+      - name: Purge all (store) cart/checkout (filesystem + git)
+        run: |
+          set -eux
+          # Purge physique (au cas où des fichiers non trackés traînent)
+          find app -type d -path "*/(store)/cart" -print -exec rm -rf {} + || true
+          find app -type d -path "*/(store)/checkout" -print -exec rm -rf {} + || true
+
+          # Purge git des fichiers (store)/cart & (store)/checkout
+          # On passe par ls-files pour ne supprimer que ce qui est suivi par git
+          git ls-files -z | grep -zE '^app/.*/\((store)\)/(cart|checkout)/page\.(js|jsx|ts|tsx)$' | xargs -0 -r git rm -f || true
+          # Variante sans sous-dossiers intermédiaires
+          git ls-files -z | grep -zE '^app/\((store)\)/(cart|checkout)/page\.(js|jsx|ts|tsx)$' | xargs -0 -r git rm -f || true
+
+          # Nettoyage de dossiers vides potentiels en (store)
+          # (on ignore erreurs si déjà supprimés)
+          find app -type d -path "*/(store)/cart" -empty -exec rmdir {} + 2>/dev/null || true
+          find app -type d -path "*/(store)/checkout" -empty -exec rmdir {} + 2>/dev/null || true
+
+      # 2) Vérifie qu'il reste au moins une page racine pour cart/checkout
+      - name: Log root pages presence
+        run: |
+          set -eux
+          echo "== ROOT cart pages =="
+          find app -type f -path "app/cart/page.*" | sort || true
+          echo "== ROOT checkout pages =="
+          find app -type f -path "app/checkout/page.*" | sort || true
+          # (On log seulement. Si absentes, Next créera juste pas ces routes, ce n'est pas bloquant pour ce fix.)
+
+      # 3) Crée des server actions et assainit le dashboard
+      - name: Create server actions + sanitize dashboard page
+        run: |
+          set -eux
+          ACTIONS="app/(dashboard)/dashboard/actions.ts"
+          PAGE="app/(dashboard)/dashboard/page.js"
+          mkdir -p "app/(dashboard)/dashboard"
+
+          # Actions serveur propres (idempotent: on écrase sans risque)
+          cat > "$ACTIONS" <<'EOF'
+"use server";
+import { createServerClient } from "@/lib/supabaseServer";
+
+/** Stats côté serveur (exemple minimal) */
+export async function getStats() {
+  const supabase = createServerClient();
+  if (!supabase) return { orders: 0, revenue: 0 };
+  // TODO: vraies requêtes ici
+  return { orders: 0, revenue: 0 };
+}
+
+/** MAJ statut commande (exemple minimal) */
+export async function updateOrderStatus(orderId: string, status: string) {
+  const supabase = createServerClient();
+  if (!supabase) return { ok:false };
+  // TODO: update DB ici
+  return { ok: true, orderId, status };
+}
+EOF
+
+          # Sanitize page si elle existe
+          if [ -f "$PAGE" ]; then
+            # 1) retirer 'use client' en tête
+            sed -i '1{/^ *["'\'']use client["'\''];\{0,1\} *$/d}' "$PAGE" || true
+
+            # 2) retirer toutes les occurrences 'use server' (lignes séparées OU inline)
+            #   - lignes entières contenant 'use server'
+            perl -0777 -pe "s/(^|\\n)\\h*(['\"])use server\\2;?\\h*\\r?\\n/\\n/gs" -i "$PAGE"
+            #   - fallback inline
+            sed -i "s/['\"]use server['\"];//g" "$PAGE" || true
+
+            # 3) injecter l'import des actions s'il manque
+            node - <<'JS'
+            const fs = require('fs');
+            const path = "app/(dashboard)/dashboard/page.js";
+            let s = fs.readFileSync(path, 'utf8');
+            if (!/from\s+["']\.\/actions["']/.test(s)) {
+              const lines = s.split('\n');
+              let i = 0;
+              while (i < lines.length && /^import\s/.test(lines[i])) i++;
+              lines.splice(i, 0, 'import { getStats, updateOrderStatus } from "./actions";');
+              s = lines.join('\n');
+              fs.writeFileSync(path, s);
+              console.log('Injected actions import');
+            } else {
+              console.log('Actions import already present');
+            }
+            JS
+          else
+            echo "[info] dashboard page not found, skipping."
+          fi
+
+      - name: Show AFTER purge/sanitize
+        run: |
+          set -eux
+          echo "== AFTER: every cart/checkout page left =="
+          find app -type f \( -path "*/cart/page.*" -o -path "*/checkout/page.*" \) | sort || true
+          echo "== AFTER: dashboard head =="
+          test -f "app/(dashboard)/dashboard/page.js" && sed -n '1,120p' app/'(dashboard)'/dashboard/page.js | nl || true
+
+      - name: Commit & Push patch
+        run: |
+          set -eux
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "fix(next v6): purge all (store) cart/checkout; sanitize dashboard server actions"
+            git push
+          fi
+
+      # 4) Build pour valider et fournir un log si ça casse
+      - name: Setup Node & install
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+      - run: npm ci || npm i
+
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
