@@ -1,0 +1,147 @@
+name: Fix Next Errors V5 (force git rm)
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch_and_build:
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show duplicates before
+        run: |
+          set -eux
+          echo "== Working tree (cart/checkout) BEFORE =="
+          git ls-files | grep -E '^app/(\(store\)/)?(cart|checkout)/page\.(js|jsx|ts|tsx)$' || true
+          echo "== Dashboard head BEFORE =="
+          test -f "app/(dashboard)/dashboard/page.js" && sed -n '1,120p' app/'(dashboard)'/dashboard/page.js | nl || true
+
+      # 1) SUPPRIMER les versions (store) avec git rm (force)
+      - name: git rm conflicting pages under (store)
+        run: |
+          set -eux
+          # supprime les pages (store)/cart/page.*
+          git ls-files -z | grep -zE '^app/\(store\)/cart/page\.(js|jsx|ts|tsx)$' | xargs -0 -r git rm -f
+          # supprime les pages (store)/checkout/page.*
+          git ls-files -z | grep -zE '^app/\(store\)/checkout/page\.(js|jsx|ts|tsx)$' | xargs -0 -r git rm -f
+          # nettoie dossiers (s'ils restent suivis vides)
+          [ -d "app/(store)/cart" ] && rmdir app/'(store)'/cart 2>/dev/null || true
+          [ -d "app/(store)/checkout" ] && rmdir app/'(store)'/checkout 2>/dev/null || true
+
+      # 2) (Sécurité) s'assurer que les pages racine existent. Sinon, log (on ne crée pas de nouveau contenu fonctionnel ici).
+      - name: Ensure root pages exist (log only)
+        run: |
+          set -eux
+          if ! git ls-files | grep -q '^app/cart/page\.(js|jsx|ts|tsx)$'; then
+            echo "[warn] No root cart page tracked by git."
+          fi
+          if ! git ls-files | grep -q '^app/checkout/page\.(js|jsx|ts|tsx)$'; then
+            echo "[warn] No root checkout page tracked by git."
+          fi
+
+      # 3) Créer des server actions dédiées + nettoyer page dashboard (toutes occurrences)
+      - name: Create server actions + sanitize dashboard page
+        run: |
+          set -eux
+          ACTIONS="app/(dashboard)/dashboard/actions.ts"
+          PAGE="app/(dashboard)/dashboard/page.js"
+          mkdir -p "app/(dashboard)/dashboard"
+
+          # Actions serveur propres
+          cat > "$ACTIONS" <<'EOF'
+"use server";
+import { createServerClient } from "@/lib/supabaseServer";
+
+/** Stats côté serveur (exemple) */
+export async function getStats() {
+  const supabase = createServerClient();
+  if (!supabase) return { orders: 0, revenue: 0 };
+  // TODO: remplace par de vraies requêtes
+  return { orders: 0, revenue: 0 };
+}
+
+/** MAJ statut commande (exemple) */
+export async function updateOrderStatus(orderId: string, status: string) {
+  const supabase = createServerClient();
+  if (!supabase) return { ok:false };
+  // TODO: update DB
+  return { ok: true, orderId, status };
+}
+EOF
+
+          # Sanitize page si elle existe
+          if [ -f "$PAGE" ]; then
+            node - <<'JS'
+            const fs = require('fs');
+            const path = "app/(dashboard)/dashboard/page.js";
+            let s = fs.readFileSync(path, 'utf8');
+
+            // 1) Enlever "use client" en tête (avec ou sans ;, espaces, CRLF)
+            s = s.replace(/^\s*(['"])use client\1;?\s*\r?\n/, '');
+
+            // 2) Enlever toutes les lignes/occurrences "use server" (où qu'elles soient)
+            s = s.replace(/(^|\n)[^\S\r\n]*(['"])use server\2;?[^\S\r\n]*\r?\n/g, '\n');
+            s = s.replace(/(['"])use server\1;?/g, ''); // fallback inline
+
+            // 3) Import des actions s'il manque
+            if (!/from\s+["']\.\/actions["']/.test(s)) {
+              const lines = s.split('\n');
+              // insérer après le bloc d'import
+              let idx = 0;
+              while (idx < lines.length && /^import\s/.test(lines[idx])) idx++;
+              lines.splice(idx, 0, 'import { getStats, updateOrderStatus } from "./actions";');
+              s = lines.join('\n');
+            }
+
+            fs.writeFileSync(path, s);
+            console.log('dashboard sanitized and actions imported');
+            JS
+          else
+            echo "[info] dashboard page not found, skipping."
+          fi
+
+      - name: Show duplicates after (git index view)
+        run: |
+          set -eux
+          echo "== Tracked files cart/checkout AFTER =="
+          git ls-files | grep -E '^app/(\(store\)/)?(cart|checkout)/page\.(js|jsx|ts|tsx)$' || true
+          echo "== Dashboard head AFTER =="
+          test -f "app/(dashboard)/dashboard/page.js" && sed -n '1,120p' app/'(dashboard)'/dashboard/page.js | nl || true
+
+      - name: Commit & Push patch
+        run: |
+          set -eux
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "fix(next v5): git rm (store) cart/checkout; sanitize dashboard server actions"
+            git push
+          fi
+
+      # 4) (Optionnel) Build pour valider
+      - name: Setup Node & install
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+      - run: npm ci || npm i
+
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
