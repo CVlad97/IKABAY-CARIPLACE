@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # IKABAY OPS - Monorepo Autonome
 
 Monorepo Next.js 14 avec connecteurs prêts à l'emploi pour DHL Express, Revolut et TTOM.
@@ -66,7 +65,7 @@ TTOM_CONTACT_EMAIL=ops@ttom.fr
 npm run dev
 ```
 
-## 📋 Tests Manuels
+## 🧪 Tests Manuels
 
 ### **1. Health Check**
 ```bash
@@ -109,7 +108,7 @@ curl -X POST http://localhost:3000/api/shipments/track \
   -d '{"trackingNumber": "1234567890"}'
 ```
 
-## 🔧 Scripts
+## 📦 Scripts
 
 ### **Sync DHL Rates**
 ```bash
@@ -150,7 +149,7 @@ npm run payouts
 - `dashboard/shipments` - Gestion expéditions
 - `demo/checkout` - Démo complète
 
-## 🌍 Spécificités Martinique
+## 🌴 Spécificités Martinique
 
 ### **Taxes DOM** (`lib/dom-taxes.ts`)
 - TVA 8,5% Martinique
@@ -164,7 +163,7 @@ npm run payouts
 - Groupage automatique
 - Manifestes CSV + PDF
 
-## 🔒 Sécurité
+## 🔐 Sécurité
 
 ### **Certificats**
 ```bash
@@ -220,7 +219,7 @@ REVOLUT_MERCHANT_API_KEY=xxx
 - **Revolut** : [developer.revolut.com](https://developer.revolut.com)
 - **TTOM** : [ttom.fr](https://ttom.fr)
 
-## 🎯 Roadmap
+## 🗺 Roadmap
 
 ### Phase 1 (Actuel)
 - ✅ Connecteurs DHL, Revolut, TTOM
@@ -239,16 +238,4 @@ REVOLUT_MERCHANT_API_KEY=xxx
 
 ---
 
-**IKABAY OPS** - Connecteurs autonomes pour marketplace caribéenne 🏝️
-=======
-IKABAY_CARAIBEEN
-```md
-# IKABAY Marketplace (Preview)
-
-- Next.js 14, TypeScript strict, Tailwind.
-- Distinction produits **locaux** (storytelling) vs **import** (AutoDS/Zendrop).
-- APIs mock: DHL/TTOM/Revolut.
-- Taxes DOM: TVA 8.5% + octroi (simplifié).
-
-### Démarrer
->>>>>>> feat/full-marketplace-revamp
+**IKABAY OPS** - Connecteurs autonomes pour marketplace caribéenne 🌴🚢✈️
